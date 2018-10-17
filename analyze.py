@@ -21,8 +21,8 @@ import pandas as pd
 # from scvi.dataset import CortexDataset, RetinaDataset
 # from scvi.dataset import LoomDataset, CsvDataset, Dataset10X, AnnDataset
 # from scvi.dataset import CsvDataset #, MouseOBDataset
-from mycsv import CsvDataset, MouseOBDataset
 import scvi.dataset as ds
+from scvi.dataset.csv import CsvDataset, MouseOBDataset
 
 from scvi.models import *
 from scvi.inference import UnsupervisedTrainer
@@ -110,7 +110,8 @@ def run_scvi(paths,
         new_n_genes=600,
         n_latent=10,
         do_individual=False,
-        dispersion="gene"):
+        dispersion="gene",
+        gene_by_cell=True):
     if new_n_genes == 0:
         new_n_genes = 1000000
 
@@ -120,13 +121,12 @@ def run_scvi(paths,
     datasets = []
     models = {}
     # for idx in range(1, 13):
-    for idx in range(1, 4):
     # for idx in range(8, 13):
-    # for path in paths:
+    for path in paths:
         save_path = save_prefix + f"/count_{idx:03d}.tsv.gz"
-        print(save_path)
-        # dataset = CsvDataset(path, save_path=save_path, compression='gzip')
-        dataset = MouseOBDataset(new_n_genes=new_n_genes, index=idx)
+        print(path)
+        dataset = CsvDataset(path, save_path=save_prefix, compression='infer', sep="\t",
+                new_n_genes=new_n_genes, gene_by_cell=gene_by_cell)
         idx = idx + 1
         print(dataset)
 
@@ -147,7 +147,7 @@ def run_scvi(paths,
     if do_individual:
         pp.close()
 
-    if len(datasets) > 1:
+    if len(datasets) > 0 and not do_individual:
         pp = PdfPages(save_prefix + '/scvi-joint.pdf')
         # NOTE this uses the intersection of genes
         # TODO use union
@@ -169,27 +169,33 @@ def run_scvi(paths,
         pp.close()
 
     # TODO save results
-    for key in models.keys():
-        model = models[key]
+    for model_id in models.keys():
+        model = models[model_id]
 
-        latent, batch_indices, labels = model.train_set.get_latent(sample=True)
-        # print(latent)
-        # print(batch_indices)
-        # print(labels)
-        indices = model.train_set.indices
-        print(indices)
-        # print(dataset.labels)
-        # print(dataset.labels[indices])
-        # print(dataset.X.index)
-        # print(dataset.X.columns)
-        # print(dataset.spot_names)
-        df = pd.DataFrame(latent, index=labels) #, index=
-        df.to_csv(osp.join(save_prefix, f"scVI-{key}-hidden.tsv.gz"), sep="\t", compression="gzip")
+        dfs = {}
+        for eval_set in [model.train_set, model.test_set]:
+            latent, batch_indices, labels, x_coord, y_coord = eval_set.get_latent(sample=True)
+            labels, x_coord, y_coord = [np.ravel(x) for x in [labels, x_coord, y_coord]]
+            names = [f"{x}x{y}" for x, y in zip(x_coord, y_coord)]
+            df = pd.DataFrame(latent, index=names)
 
-        model.train_set.show_t_sne(n_samples=n_samples_tsne,
+            for label in set(list(labels)):
+                these = pd.Series(labels, index=df.index) == label
+                df_ = pd.DataFrame(df.loc[these])
+                label = str(label).rjust(3, "0")
+                if label in dfs.keys():
+                    dfs[label] += [df_]
+                else:
+                    dfs[label] = [df_]
+
+        for label in dfs.keys():
+            df = pd.concat(dfs[label])
+            df.to_csv(osp.join(save_prefix, f"scVI-{model_id}-hidden-label={label}.tsv.gz"), sep="\t", compression="gzip")
+
+            model.train_set.show_t_sne(n_samples=n_samples_tsne,
                 # color_by='batches',
                 color_by='labels',
-                save_name=save_prefix + f"/scVI-{key}-tSNE.pdf")
+                save_name=save_prefix + f"/scVI-{model_id}-tSNE.pdf")
 
 
 
@@ -202,14 +208,14 @@ def main():
     parser.add_argument('-t', '--types', dest='n_latent', type=int, default=10)
     parser.add_argument('-n', '--n_epochs', dest='n_epochs', type=int, default=400)
     # TODO
-    # parser.add_argument('--transpose', action='store_true', help="tranpose input count matrices")
+    parser.add_argument('--transpose', dest="gene_by_cell", action='store_false', help="tranpose input count matrices")
     parser.add_argument('--individual', action='store_true', dest='do_individual', help="also perform individual analyses")
     parser.add_argument('--cuda', action='store_true', dest="use_cuda", help="tranpose input count matrices")
     # TODO maybe invert switch logic
     parser.add_argument('--batches', action='store_true', dest="use_batches", help="allow batches as covariates")
     parser.add_argument('--learning-rate', dest='lr', type=float, default=1e-3)
     # parser.add_argument('--restore', type=str)
-    parser.add_argument('-s', '--save_prefix', type=str, metavar="PATH", default="./data")
+    parser.add_argument('-s', '--save_prefix', type=str, metavar="PATH", default="./data/")
     parser.add_argument('-d', '--dispersion', type=str, metavar="STRING", help="one of gene, gene-batch, gene-label, gene-cell", default="gene")
     # TODO
     # parser.add_argument('-d', '--design', type=str, default="")

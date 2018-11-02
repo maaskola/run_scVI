@@ -202,6 +202,10 @@ def run_scvi(paths,
 def main():
     """ Parses the command line and runs scVI
     """
+
+    import time
+    start_time = time.time()
+
     parser = argparse.ArgumentParser(description='Miniature std')
     parser.add_argument('paths', metavar='count-matrix', type=str, nargs='*',
         help='the path to a count matrix with genes in the rows and spots in the columns')
@@ -227,7 +231,11 @@ def main():
         help='how many spots to visualize using tSNE (default: 200)')
     args = vars(parser.parse_args())
     print(args)
+
     run_scvi(**args)
+
+    stop_time = time.time()
+    print(f"Runtime: {stop_time - start_time} sec")
 
 if __name__ == '__main__':
     main()
